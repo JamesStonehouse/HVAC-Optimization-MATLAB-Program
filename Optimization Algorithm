@@ -1,0 +1,1586 @@
+% This function serves as the primary "design" function that is called by the GUI.
+
+function Design_code(L_room, W_room, H_room, T_inside, RH_inside, T_outside, Noc,t_runtime)    
+
+    %pwd gets current directory, then the directory suffix is extracted.
+    directory_prefix_string = extractBefore(pwd, "groupSF5");    
+    %Check if the user tries to run this file directly by checking if a
+    %variable has been passed here from the GUI (e.g. we use
+    %'axial_force'). If so, open the GUI instead.
+    if ~exist('L_room','var')
+        cd_loc = strcat(directory_prefix_string, '/groupSF5/MATLAB/');
+        run_loc = strcat(directory_prefix_string, '/groupSF5/MATLAB/MAIN.mlapp');
+        cd(cd_loc);
+        run(run_loc); 
+        return
+    end
+%__________________________________________________________________________
+%__________________________________________________________________________
+%__________________________________________________________________________
+    % -----------1. Design calculations --------------------%
+    % Put your analysis and optimization calculations here.
+
+
+%__________________________________________________________________________
+% SET INPUTS
+%__________________________________________________________________________
+% Room Load / Airflow
+
+% Resistances from experimental sources
+    U_wall = 0.51;                      % [W/m^2*K]
+    U_door = 2.3;                       % [W/m^2*K]
+    U_ceiling = 0.18;                   % [W/m^2*K]
+    U_floor = 0.18;                     % [W/m^2*K]
+    U_window = 1.415;                   % [W/m^2*K]
+% Minimum air changes per hour
+    ACH = 2/3;                 
+% Atmostpheric Pressure
+    P_atm = 101300;                     % [Pa]
+% Airflow Losses
+% HDPE friction factor
+% (Le/D) of not smooth 90 degree bend
+    LeD90b = 60;  
+% Photo-catalytic Oxidation filter pressure loss (set by product)
+    SF_fan = 1.05;
+% Inlet Friction loss coefficients
+    K_cond_inlet = 0.5;
+    K_evap_inlet = 0.5;
+%--------------------------------------------------------------------------
+% Refrigeration Cycle
+
+% These refrigerant properties are determined at determined temperatures from modeling,
+% the refrigerant temperatures will be slightly different then these depending on new
+% user inputs, but will be close so these values will be used as a reasonable approximation
+% Density
+    DENSITY_ref_HpV = 58;               % [Kg/m^3]
+    DENSITY_ref_HpL = 1111;             % [Kg/m^3]
+    DENSITY_ref_LpV = 6.83;             % [Kg/m^3]
+    DENSITY_ref_LpL = 1358;             % [Kg/m^3]
+% Specific heat (constant pressure)
+    Cp_ref_HpV = 1.170;                 % [KJ/Kg]
+    Cp_ref_HpL = 1.566;                 % [KJ/Kg]
+    Cp_ref_LpV = 0.815;                 % [KJ/Kg]
+    Cp_ref_LpL = 1.293;                 % [KJ/Kg]
+% Thermal conductivity 
+    K_ref_HpV = 0.056;                  % [W/m*K]
+    K_ref_HpL = 0.07043;                % [W/m*K]
+    K_ref_LpV = 0.009816;               % [W/m*K]
+    K_ref_LpL = 0.1011;                 % [W/m*K]
+% Viscosity
+    VISCOSITY_ref_HpV = 12.86e-06;      % [W/m*K]
+    VISCOSITY_ref_HpL = 141e-06;        % [W/m*K]
+    VISCOSITY_ref_LpV = 9.99e-06;       % [W/m*K]
+    VISCOSITY_ref_LpL = 347.6e-06;      % [W/m*K]
+% Prandlt Number
+    Pr_ref_HpV = 0.91;                 % [Dimesionless]
+% Evaporator and Condenser efficiency
+    efficiency_evap = 0.95;              
+    efficiency_cond = 0.95;
+% Isentropic Compressor Efficiency
+    efficiency_comp = 0.75;
+% Condenser / Evaporator
+    SF_ref = 1.3;
+    K_copper = 401;                     % [W/m*K]
+    K_aluminum = 237;                   % [W/m*k]
+    Pi = pi;
+% # of Pipe couplers (90 degree bends) in connective refrigerant tubing
+    N_90b = 13;      
+%--------------------------------------------------------------------------
+% Structure
+
+% External modeling forces
+% Disturbance Force
+    F_D = 829.9;                        % [N]
+% Handle Force Max X
+    F_Hx = 346.4;                       % [N]
+% Handle Force Max Y
+    F_Hy = 200;                         % [N]
+% Structural Safety Factor
+    SF = 1.5;
+% Acceleration due to gravity
+    g = 9.81;                           % [Kg]
+% Material Tensile and Shear Yeild Stress
+    Yeild_GSteel = 350*10^6;            % [Pa]
+    ShearYeild_GSteel = 262.5*10^6;     % [Pa]
+    Yeild_CSteel = 415*10^6;            % [Pa]
+    ShearYeild_CSteel = 311.2*10^6;     % [Pa]
+    Yeild_Aluminum = 273*10^6;          % [Pa]
+    ShearYeild_Aluminum = 207*10^6;     % [Pa]
+    Yeild_PVC = 25.7*10^6;              % [Pa]
+    ShearYeild_PVC = 2.3*10^6;          % [Pa]
+% Material Densities
+    density_GSteel = 7800;              % [Kg/m^3]
+    density_CSteel = 7870;              % [Kg/m^3]
+    density_Al = 2710;                  % [Kg/m^3]
+    density_PVC = 1300;                 % [Kg/m^3]
+    density_Water = 997;                % [Kg/m^3]
+% Elastic Modulus of Carbon Steel
+    Modulus_GSteel = 200*10^9;          % [Pa]
+% Filter Thicknesses
+    t_carbon = 0.044;                   % [m]
+%__________________________________________________________________________
+% LOOPS
+%__________________________________________________________________________
+
+% The program relys on input values "guesses" of parameters to then 
+% calculate them, the new determined parameter is sent back into the loop 
+% as the new initial "guess"
+% A loop is completed when the input "guess" parameter and the output
+% determined parameter converge
+% All nested loops inside larger loops are set back to being open (=0) when
+% larger loop is completed
+% Sets all loops open
+%
+% Loop Structure:
+% START {, END }
+% YES_### Looping variable, =0 open, =1 closed
+
+% >>START
+YES_WT = 0; %{                                          Window Tubing Diameter
+    YES_FACTOR = 0; %{                                  Volume Flow Rate Factor
+        YES_Hevap = 0; %{                               Evaporator Height
+            YES_D_ref = 0; %{                           Refrigerant Pipe Diameter
+                YES_Wcomp = 0; %{                       Compressor Work
+                    YES_hex = 0; %{                     Exhaust Temperature
+                        YES_NFE = 0; %{                 # of Evaporator Fins
+                            YES_NC = 0; %{              # of Evaporator Columns
+                                YES_Lcoil = 0; %}       Length of Evaporator Coil
+                                %}
+                             %}
+                          %}
+                       %}
+                    YES_NFC = 0; %{                     # of Evaporator Fins 
+                        YES_FinNCC = 0; %{              # of Collumns
+                            YES_LcoilC = 0; %{          Length of Condenser Coil                  
+                            %}
+                        %}
+                    %}
+                    YES_Efan = 0; %{                    Evaporator Fan Dimensions                
+                    %}
+                    YES_Cfan = 0; %{                    Condenser Fan Dimensions
+                        %}
+                    %}
+                %}
+            %}
+        %}
+    %}
+%}
+% Structural Frame Loop x 10 {
+                                                    % Top Panel thickness,Bolt Diameter
+                                                    % Frame Bracket thickness,Bolt Diameter
+                                                    % Bottom Panel thickness,Bolt Diameter
+                                                    % Base Plate thickness,Bolt Diameter
+                                                    % Hood thickness,Bolt Diameter
+%}
+% >>DONE                    
+%__________________________________________________________________________
+% INITIAL GUESSES
+%__________________________________________________________________________
+
+% Guess Exhaust Enthalpy to get Temperature
+    h_air_exhaust = 325;                % [KJ/Kg]
+% Compressor Work Required to Overcome Friction Losses
+    W_compressor_loss = 0;              % [Watts]
+% Evaperator Fan Dimenions
+    D_evap_fan_inlet = 0.09;            % [m]
+    D_evap_fan = 0.16;                  % [m]
+    L_evap_fan_outlet = 0.10;           % [m]                                     
+    W_evap_fan_outlet = 0.10;           % [m]                                     
+    W_evap_fan = 0;                     % [m]
+    dP_evap_fan = 0;                    % [m]
+% Condenser Fan Dimensions
+    D_cond_fan_inlet = 0.09;            % [m] 
+    D_cond_fan = 0.16;                  % [m]
+    L_cond_fan_outlet = 0.10;           % [m]                                      
+    W_cond_fan_outlet = 0.10;           % [m]                                     
+    W_cond_fan = 0;                     % [m] 
+    dP_cond_fan = 0;                    % [m]
+% These values will be determined by Fan and Compressor selection but are
+% required to solve for the required Fan and Compressor power for
+% selection, the new determined dimensions will be fed back into until the
+% convergence of all properties
+% Refrigerant pipe diameter 
+    t_ref_pipe = 0.001;                 % [m]
+    t_fins = 0.0001;                    % [m]
+    N_rows_evap = 1;                    % [#]
+    N_col_evap = 3;                     % [#]
+    N_col_cond = 3;                     % [#]
+% Inital Fin effectiveness 
+    Fin_eff = 0.1;
+%__________________________________________________________________________
+% MODELING (START)
+%__________________________________________________________________________
+% Room Heat Load
+
+% Room Areas [m^3]
+    A_wall = 2*H_room*L_room + 2*H_room*W_room;
+    A_ceiling = L_room*W_room;
+    A_window = 3;
+    A_door = 2;
+    A_floor = A_ceiling;
+% Individual steady state room loads (Watts) from different sources
+    Q_wall = A_wall*U_wall*(T_outside - T_inside);
+    Q_ceiling = A_ceiling*U_ceiling*(T_outside - T_inside);
+    Q_door = A_door*U_door*(T_outside - T_inside);
+    Q_window = A_window*U_window*(T_outside - T_inside);
+    Q_floor = A_floor*U_floor*(T_outside - T_inside);
+% Load from occupants
+    Q_igs = 136  +  2.2*A_floor + 22*Noc;
+    Q_igL = 20 + 0.22*A_floor + 12*Noc;
+% Total steady state room load (Energy required to be removed from the room by the evaporator at steady state 
+    Q_evaporator = Q_wall + Q_ceiling + Q_door + Q_window + Q_floor + Q_igs + Q_igL;
+    Q_evaporator = Q_evaporator/1000;
+%--------------------------------------------------------------------------
+% Air flows (inside and outside)
+
+% Function called to get air properties at T air average:
+% Condenser air average
+    T_exhaust = PROPERTIES_AIR_h(h_air_exhaust);
+    [DENSITY_air_exhaust,K_air_exhaust,VISCOSITY_air_exhaust,Pr_air_exhaust,h_air_exhaust] = PROPERTIES_AIR(T_exhaust);
+    T_air_avg_cond = (T_outside + T_exhaust)/2;
+    [DENSITY_air_avg_cond,K_air_avg_cond,VISCOSITY_air_avg_cond,Pr_air_avg_cond,h_air_avg_cond] = PROPERTIES_AIR(T_air_avg_cond);
+% Inside and outside (For air friction losses)
+    [DENSITY_air_inside,K_air_inside,VISCOSITY_air_inside,Pr_air_inside,h_air_inside] = PROPERTIES_AIR(T_inside);
+    [DENSITY_air_outside,K_air_outside,VISCOSITY_air_outside,Pr_air_outside,h_air_outside] = PROPERTIES_AIR(T_outside);
+% Clean air delivery rate (minimal) flow rate
+    CADR_CFM = (A_floor*H_room*ACH)/60;
+    CADR = A_floor*H_room*ACH/3600;
+% Volume of Room
+    V_room = L_room*W_room*H_room;
+% Approximant desired unit height as a first guess
+    H_evap = ((0.26 - 0.2)/(147 - 22.5))*V_room + 0.19;
+% Approximant first guess for window tubing
+    %D_window_tubing = H_evap*(0.15 - 0.08)/(0.44 - 0.21) + 0.028;
+% Intial Guess Volume flow rate multiplication factor, will be reduced
+% to match fan volume flow rate. If the volume flow rate is below the
+% chosen the fan will be underpowered to produce the required volume
+% flow rate, this occurs at small room sizes.
+    FACTOR = 10;
+    D_window_tubing = 0.15;
+    D_ref_pipe = 0.008 + H_evap*0.01;
+    while YES_WT == 0
+        while YES_FACTOR == 0
+        % Inside air (evaporator) flow rate (m^3/s)
+            V_inside = CADR*FACTOR;
+            Reff_evap = 2*D_ref_pipe/3;       % (m)
+            while YES_Hevap == 0
+            fprintf('\n   >>START YES_Hevap\n');    
+                while YES_D_ref == 0
+                    fprintf('\n   >>START YES_D_ref\n');
+                % Loops until compressor work from losses converges 
+                    while YES_Wcomp == 0 
+                        fprintf('\n       >>START YES_Wcomp\n');
+                    % Inital Coil length for starting number of fin calculations
+                        L_coils_evap_old = 1000;            % [m]
+                        L_coils_cond_old = 1000;            % [m]
+                        % Inital Number of fins in heat exchanger, increases to optimal number 
+                            N_evap_fins = 10;
+                            while YES_NFE == 0   
+                                fprintf('\n         >>START YES_NFE\n');
+                            % Number of evaporator columns set to minimal amount at
+                            % the beginning of every loop 
+                                N_col_evap = 3;
+                                while YES_NC == 0
+                                    fprintf('\n   >>START YES_NC\n');
+                                    V_air_evap = V_inside/(1.3*H_evap^2);    
+                                % Supply air enthalpy (outlet of evaporator)
+                                    h_air_supply = h_air_inside - Q_evaporator/(V_inside*DENSITY_air_inside);
+                                % Get specific air properties based on enthalpy for supply enthalpy
+                                    T_supply = PROPERTIES_AIR_h(h_air_supply);
+                                    [DENSITY_air_supply,K_air_supply,VISCOSITY_air_supply,Pr_air_supply] = PROPERTIES_AIR(T_supply);
+                                % Evaporator air average
+                                    T_air_avg_evap = (T_inside + T_supply)/2;
+                                    [DENSITY_air_avg_evap,K_air_avg_evap,VISCOSITY_air_avg_evap,Pr_air_avg_evap] = PROPERTIES_AIR(T_air_avg_evap);
+%--------------------------------------------------------------------------
+% Refrigeration Cycle
+        
+                                    while YES_hex == 0
+                                    % Evaporation Temperature (C) makes sure it is always lower to allow heat transfer
+                                        T_LpV = T_supply - 20; 
+                                        T_LpLV = T_LpV;
+                                    % Garantees Condenser outlet temperature will never be greater then the outlet of the air
+                                        T_HpL = T_exhaust + 2;
+                                    % Function to get Low refrigerant pressure, enthalpies and entropies
+                                        [P_low,hf_Lp,hg_Lp,sf_Lp,sg_Lp] = PROPERTIES_REFsat(T_LpV);
+                                    % Saturated Vapour state
+                                        h_LpV = hg_Lp;
+                                        s_LpV = sg_Lp;
+                                    % Function to get high refrigerant pressure,enthalpie and entropies
+                                        [P_high,hf_Hp,hg_Lp,sf_Hp,sg_Lp] = PROPERTIES_REFsat(T_HpL);
+                                        h_HpL = hf_Hp;
+                                        s_HpL = sf_Hp;
+                                    % Isenthalpic expansion valve
+                                        h_LpLV = h_HpL;
+                                        x_LpLV = (h_LpLV - hf_Lp)/(hg_Lp - hf_Lp);     
+                                    % Approximate properties of saturated mixture using quality
+                                        K_ref_LpLV = K_ref_LpL*x_LpLV + (1-x_LpLV)*K_ref_LpL;
+                                        Cp_ref_LpLV = Cp_ref_LpV*x_LpLV + (1-x_LpLV)*Cp_ref_LpL;
+                                        VISCOSITY_ref_LpLV = VISCOSITY_ref_LpV*x_LpLV + (1-x_LpLV)*VISCOSITY_ref_LpL;
+                                        DENSITY_ref_LpLV = DENSITY_ref_LpV*x_LpLV + (1-x_LpLV)*DENSITY_ref_LpL;
+                                        s_LpLV = sg_Lp*x_LpLV + (1 - x_LpLV)*sf_Lp;
+                                    % Mass flow rate of refrigerant
+                                        m_ref = Q_evaporator/((h_LpV - h_LpLV)*efficiency_evap);
+                                    % Isentropic Compressor
+                                        s_HpV = s_LpV;
+                                        h_HpV_s = PROPERTIES_REFsuperH(s_HpV);
+                                    % Isentropic Work
+                                        W_compressor_s = m_ref*(h_HpV_s - h_LpV);
+                                    % Isentropic efficiency correction
+                                        W_compressor_noLoss = W_compressor_s/efficiency_comp;
+                                        h_HpV = h_LpV + W_compressor_noLoss/m_ref;
+                                        T_HpV = PROPERTIES_REFsuperT(h_HpV);
+                                    % Required Compressor work to produce Refrigeration cycle and overcome
+                                    % friction losses
+                                        W_compressor = W_compressor_noLoss + W_compressor_loss;
+                                    % Calculate Coefficent of performance for refrigeration cycle
+                                        COP = Q_evaporator/W_compressor;
+                                    % Condenser (Outside Air flow) Load    
+                                        Q_condenser = (Q_evaporator + W_compressor)/efficiency_cond;
+        
+        
+    
+                                    % Condenser Flow rate same as Evaporator
+                                        V_outside = V_inside;
+                                    %Exhaust Temperature
+                                        h_air_exhaust_new = Q_condenser/((V_outside*DENSITY_air_exhaust)*efficiency_cond) + h_air_outside;
+                                        T_exhaust_new = PROPERTIES_AIR_h(h_air_exhaust_new);  
+                                        if abs(h_air_exhaust_new - h_air_exhaust) < 1
+                                            YES_hex = 1;
+                                        else 
+                                            YES_hex = 0; 
+                                            h_air_exhaust = h_air_exhaust_new;
+                                            T_exhaust = T_exhaust_new;
+                                        end
+                                    end
+                                    YES_hex = 0;
+%__________________________________________________________________________
+% ANALYSIS
+%__________________________________________________________________________
+% Evaporator
+
+                                % Mass flow rate of inside (evaporator) air
+                                    m_inside = V_inside*DENSITY_air_avg_evap;
+                                % The width scales with the height by a factor set by the Fan sizes
+                                    W_evap = H_evap*1.3;
+                                % Area of condenser, which is equal to filter area and larger funnel area
+                                    A_evap = H_evap*W_evap;
+                                    P_evap = 2*H_evap + 2*W_evap;
+                                % Equivilent diameter of rectangular duct
+                                    D_evap_eq = 4*A_evap/P_evap;
+                                % Outer refrigerant pipe diameter
+                                    D_ref_pipe_outer = D_ref_pipe + 2*t_ref_pipe;   
+                                % Renolds of air external forced convection on cylindrical refrigerant pipes
+                                    Renolds_air_avg_evap = DENSITY_air_avg_evap*V_air_evap*D_ref_pipe_outer/VISCOSITY_air_avg_evap;
+                                % Experimental Nusselt number correlation
+                                    [C_air,n_air] = NU_AIR_CONSTANTS(Renolds_air_avg_evap);
+                                    Nusselt_air_avg_evap = C_air*(Renolds_air_avg_evap^n_air)*Pr_air_avg_evap^(1/3);
+                                    hconv_air_avg_evap = Nusselt_air_avg_evap*K_air_avg_evap/(D_ref_pipe + 2*t_ref_pipe);
+                                %Checks to make sure rerigerant flow is turbulent and increases pipe diameter otherwise
+                                % Internal forced convection of refrigerant through pipes
+                                    Renolds_ref_LpV = 4*m_ref/(Pi*D_ref_pipe*VISCOSITY_ref_LpV);
+                                    Renolds_ref_LpLV = 4*m_ref/(Pi*D_ref_pipe*VISCOSITY_ref_LpLV);
+                                    Renolds_ref_avg_evap = (Renolds_ref_LpV + Renolds_ref_LpLV)/2;
+                                % Refrigerant Prandtl Number
+                                    Pr_ref_LpV = 1000*VISCOSITY_ref_LpV*Cp_ref_LpV/K_ref_LpV;
+                                    Pr_ref_LpLV = 1000*VISCOSITY_ref_LpLV*Cp_ref_LpLV/K_ref_LpLV;
+                                % Turbulent forced internal convection
+                                    Nusselt_ref_LpV = 0.023*(Renolds_ref_LpV^0.8)*Pr_ref_LpV^(0.3);
+                                    Nusselt_ref_LpLV = 0.023*(Renolds_ref_LpLV^0.8)*Pr_ref_LpLV^(0.3);
+                                    hconv_ref_LpV = Nusselt_ref_LpV*K_ref_LpV/D_ref_pipe;
+                                    hconv_ref_LpLV = Nusselt_ref_LpLV*K_ref_LpLV/D_ref_pipe;
+                                    hconv_ref_avg_evap = (hconv_ref_LpV + hconv_ref_LpLV)/2;        
+                                % Fin Efficiency Parameters
+                                    r2c = D_ref_pipe_outer/2 + Reff_evap + t_fins/2;
+                                    Lc = Reff_evap + t_fins/2;
+                                    Ap = Lc*t_fins;
+                                    DIM1 = r2c/(D_ref_pipe_outer/2);
+                                    DIM2 = (Lc^(3/2))*(hconv_air_avg_evap/(K_aluminum*Ap))^(1/2);
+                                % Function that gets fin efficiency based on non dimensional parameters
+                                    efficiency_fin = EFFICIENCY_FIN(DIM1,DIM2);
+                                % Fin Resistance and unfin Resistance
+                                    A_noFins = t_fins*Pi*D_ref_pipe_outer*N_evap_fins*2;
+                                    R_noFins = 1/(hconv_air_avg_evap*A_noFins);
+                                    A_fins = 2*Pi*(Reff_evap^2)*N_evap_fins;                 
+                                    R_fins = 1/(efficiency_fin*hconv_air_avg_evap*A_fins);
+                                % Fin Effectiveness
+                                    Fin_eff_new = R_noFins/R_fins;
+                            % Loop set back to open when finished
+                                    YES_FinT = 0;
+                                    L_coils_evap = 0.0001;
+                                    while YES_Lcoil == 0
+                                        fprintf('\n                   >>START YES_Lcoil\n');
+                                        R_conv_ref_evap = 1/(hconv_ref_avg_evap*Pi*D_ref_pipe*L_coils_evap);		
+                                        R_cond_evap = log((D_ref_pipe_outer/2)/(D_ref_pipe/2))/(2*Pi*L_coils_evap*K_copper);
+                                    % Area of refrigerant pipe with no fins
+		                                A_unfin_evap = Pi*2*(D_ref_pipe_outer/2)*(W_evap - N_evap_fins*t_fins)*L_coils_evap;
+                                        R_unfin_evap = 1/(hconv_air_avg_evap*A_unfin_evap);
+                                    % Area of evaporator fins
+                                        A_fins_evap = N_evap_fins*L_coils_evap*(((Reff_evap + (D_ref_pipe_outer/2))^2 - (D_ref_pipe_outer/2)^2)*Pi*2 + 2*(D_ref_pipe_outer/2)*Pi*t_fins);
+                                        R_fins_evap = 1/(efficiency_fin*hconv_air_avg_evap*A_fins_evap); 
+                                        R_total_new_evap = R_conv_ref_evap + R_cond_evap + (1/R_unfin_evap + 1/R_fins_evap)^-1;
+                                    % Log mean temperature difference between refrigerant and air
+                                        deltaT1_evap = T_inside - T_LpLV;
+                                        deltaT2_evap = T_supply - T_LpV;
+                                        deltaTlm_evap = (deltaT2_evap - deltaT1_evap)/(log(deltaT2_evap/deltaT1_evap));
+                                    % Required Resistance compared to resistance from guessed length of coils
+                                        R_total_evap= deltaTlm_evap/(Q_evaporator*1000);                                       
+                                    % Repeats until the pipe length converges
+                                        if R_total_new_evap - R_total_evap < 0        
+                                            YES_Lcoil = 1;
+                                        else
+                                        % Increases from minimum value to make the resistances match
+                                            L_coils_evap = L_coils_evap + 0.1; 
+                                            YES_Lcoil = 0;
+                                        end
+                                    end
+                                % Loop set back to open when finished
+                                    YES_Lcoil = 0;                       
+                                % Get number of pipe rows from geometric relation
+                                    %N_rows_evap = -1/2 + sqrt(1/2 + 2*(L_coils_evap/(N_col_evap*1.3*(Reff_evap + D_ref_pipe_outer/2))))/2;
+                                    N_rows_evap = H_evap/(2*(D_ref_pipe_outer/2 + Reff_evap)) - 1;
+                                    L_coils_evap_new = H_evap*1.3*N_col_evap*N_rows_evap;
+                                % Number of rows of rows must be an integer
+                                    N_rows_evap = ceil(N_rows_evap);
+                                % Number of rows must be an integer and even
+                                    if mod(N_rows_evap,2)                      
+                                        N_rows_evap = N_rows_evap + 1;
+                                    end
+                                % Increases Number of Columns if the required coil length is
+                                % larger then the available coil length at the current
+                                % dimensions
+                                    if L_coils_evap_new - L_coils_evap < 0
+                                        N_col_evap = N_col_evap + 2;
+                                        YES_NC = 0;
+                                    else
+                                        YES_NC = 1;
+                                    end 
+                                end
+                            % Loop set back to open when finished
+                                YES_NC = 0;
+                                if L_coils_evap/L_coils_evap_old < 0.99
+                                    L_coils_evap_old = L_coils_evap;
+                                    N_evap_fins = N_evap_fins + 1;
+                                    YES_NFE = 0;
+                                else
+                                    YES_NFE = 1;
+                                end
+              
+                            end
+                        % Loop set back to open when finished
+                            YES_NFE = 0;                   
+%--------------------------------------------------------------------------
+% Condenser
+        
+                        % The Condenser will the identical in construction to the
+                        % Evaporator but will change the number of fins to match the
+                        % required Q evaprator
+                            H_cond = H_evap;
+                            W_cond = W_evap;
+                            D_cond_eq = D_evap_eq;
+                            A_cond = A_evap; 
+                            Reff_cond = Reff_evap;            
+                    % Convection coefficient solved using average temperature
+                        V_air_cond = V_outside/A_cond;
+                        Renolds_air_avg_cond = DENSITY_air_avg_cond*V_air_cond*D_ref_pipe_outer/VISCOSITY_air_avg_cond;
+                    % Experimental Nusselt number correlation
+                        [C_air,n_air] = NU_AIR_CONSTANTS(Renolds_air_avg_cond);
+                        Nusselt_air_avg_cond = C_air*(Renolds_air_avg_cond^n_air)*Pr_air_avg_cond^(1/3);
+                        hconv_air_avg_cond = Nusselt_air_avg_cond*K_air_avg_cond/(D_ref_pipe + 2*t_ref_pipe);
+                        Renolds_ref_HpV = 4*m_ref/(Pi*D_ref_pipe*VISCOSITY_ref_HpV);
+                        Renolds_ref_HpL = 4*m_ref/(Pi*D_ref_pipe*VISCOSITY_ref_HpL);
+                        Pr_ref_HpV = 1000*VISCOSITY_ref_HpV*Cp_ref_HpV/K_ref_HpV;
+                        Pr_ref_HpL = 1000*VISCOSITY_ref_HpL*Cp_ref_HpL/K_ref_HpL;
+                    % Assuming laminar and constant pipe surface temperature
+                        Nusselt_ref_HpV = 0.023*(Renolds_ref_HpV^0.8)*Pr_ref_HpV^(0.3);
+                        Nusselt_ref_HpL = 0.023*(Renolds_ref_HpL^0.8)*Pr_ref_HpL^(0.3);
+                        hconv_ref_HpV = Nusselt_ref_HpV*K_ref_HpV/D_ref_pipe;
+                        hconv_ref_HpL = Nusselt_ref_HpL*K_ref_HpL/D_ref_pipe;
+                        hconv_ref_avg_cond = (hconv_ref_HpV + hconv_ref_HpL)/2;        
+                    % Log mean temperature difference between refrigerant and air
+                    % Evaporator temperature constant
+                        deltaT1_cond = T_HpV - T_outside; 
+                        deltaT2_cond = T_HpL - T_exhaust;        
+                        deltaTlm_cond = (deltaT2_cond - deltaT1_cond)/(log(deltaT2_cond/deltaT1_cond));
+                        R_total_cond = deltaTlm_cond/(Q_condenser*1000);
+                    % Inital Number of fins in heat exchanger, increases to optimal number 
+                        N_cond_fins = 10;
+                    % Increases Number of fins from 1 up to the optimal number
+                    % (See en of loop)
+                        while YES_NFC == 0
+                        % Intital Guess
+                            L_coils_cond = 0.0001;
+                            N_rows_cond = N_rows_evap;
+                            N_col_cond = 3;
+                            while YES_FinNCC == 0
+                                fprintf('\n                   >>START YES_FinTC\n');
+                            % Increases coil length from 0.0001 to match required condenser
+                            % resistance based on current dimensions
+                                while YES_LcoilC == 0
+                                    fprintf('\n                   >>START YES_LcoilC\n');
+                                    R_conv_ref_cond = 1/(hconv_ref_avg_cond*Pi*D_ref_pipe*L_coils_cond);		
+                                    R_cond_cond = log((D_ref_pipe_outer/2)/(D_ref_pipe/2))/(2*Pi*L_coils_cond*K_copper);
+        	                    % Area of refrigerant pipe without fins
+		                            A_unfin_cond = Pi*2*(D_ref_pipe_outer/2)*(W_cond - N_cond_fins*t_fins)*L_coils_cond;
+                                    R_unfin_cond = 1/(hconv_air_avg_cond*A_unfin_cond);
+                                % Area of evaporator fins
+                                    A_fins_cond = N_cond_fins*L_coils_cond*(((Reff_cond + (D_ref_pipe_outer/2))^2 - (D_ref_pipe_outer/2)^2)*Pi*2 + 2*(D_ref_pipe_outer/2)*Pi*t_fins);
+                                    R_fins_cond = 1/(efficiency_fin*hconv_air_avg_cond*A_fins_cond); 
+                                    R_total_cond_new = R_conv_ref_cond + R_cond_cond + (1/R_unfin_cond + 1/R_fins_cond)^-1;               
+                                    if R_total_cond_new - R_total_cond < 0
+                                        YES_LcoilC = 1;
+                                    else            
+                                        L_coils_cond = L_coils_cond + 0.1;
+                                        YES_LcoilC = 0;
+                                    end
+                                end
+                            % Loop set back to open when finished
+                                YES_LcoilC = 0;
+                            % Available coil length at current dimensions
+                                L_coils_cond_new = H_cond*1.3*N_col_cond*N_rows_cond;
+                                if L_coils_cond_new - L_coils_cond < -1
+                                N_col_cond = N_col_cond + 2;
+                                    YES_FinNCC = 0;
+                                else
+                                    YES_FinNCC = 1;
+                                end
+                            end
+                        % Loop set back to open when finished
+                            YES_FinNCC = 0;
+                            % Loops increaseing number of fins until adding
+                            % another fin only results in a 1% difference in
+                            % Required Coil length from the previous loop
+                            if L_coils_cond/L_coils_cond_old < 0.99
+                                L_coils_cond_old = L_coils_cond;
+                                N_cond_fins = N_cond_fins + 1;
+                                YES_NFC = 0;
+                            else
+                                YES_NFC = 1;
+                            end
+                        end
+                    % Loop set back to open when finished
+                        YES_NFC = 0;     
+%--------------------------------------------------------------------------
+%Evaporator Air Flow (inside)
+        
+                    % Inlet Vent
+                        headLoss_evap_inlet = (K_evap_inlet/2)*(V_air_evap)^2;
+                    % Filters
+                        [dP_preF,t_preF] = PREF(V_air_evap);
+                        [dP_HEPA,t_HEPA] = HEPA(V_air_evap);
+                        dP_carbon = V_air_evap*140/1000;
+                        dP_carbon_max = max(3*dP_carbon, dP_carbon + 50);
+                    % Evaporator
+                    % Cross section area of fins and piping to calculate area contraction into evaporator
+                        A_evap_fins = H_evap*t_fins*N_evap_fins;
+                        A_evap_pipe = D_ref_pipe_outer*N_rows_evap*H_evap*1.3 - N_evap_fins*t_fins*D_ref_pipe_outer;
+                    % Area Contraction into and reexpansion out to same area (A_evap)
+                        A_ratio_evap_in = (A_evap - A_evap_pipe - A_evap_fins)/A_evap;
+                        A_ratio_evap_out = A_ratio_evap_in;
+                        K_evap_in = INSTANT_AREA_CONTRACTION(A_ratio_evap_in);
+                        K_evap_out = INSTANT_AREA_EXPANSION(A_ratio_evap_out);
+                        V_air_in_evap = V_inside/(A_evap - A_evap_pipe - A_evap_fins);
+                        headLoss_evap_in = (K_evap_in/2)*(V_air_in_evap)^2;
+                        headLoss_evap_out = (K_evap_out/2)*(V_air_in_evap)^2;
+                        headLoss_evap = headLoss_evap_in + headLoss_evap_out;
+                    % Counter
+                        ie = 0;
+                    %The Fan work depends on the fan dimensions so guess first and iterate till convergence
+                        while YES_Efan == 0
+                            fprintf('\n                       >>START YES_Efan\n');  
+                        % Square Duct Hydraulic Diameter
+                            A_evap_fan_outlet = L_evap_fan_outlet*W_evap_fan_outlet;
+                            P_evap_fan_outlet = 2*L_evap_fan_outlet + 2*W_evap_fan_outlet;
+                            Deff_evap_fan_outlet = 4*A_evap_fan_outlet/P_evap_fan_outlet;
+                        % Calculating Renolds number of air in fan
+                            Renolds_air_EfanA = 4*m_inside/(Pi*Deff_evap_fan_outlet*VISCOSITY_air_inside);
+                        % Friction factor be turbulent, approximent correction applied
+                            f_EfanA = 10*64/Renolds_air_EfanA;
+                        % Funnel
+                            A_evap_fan_inlet = Pi*(D_evap_fan_inlet/2)^2;
+                            A_ratio_evap_funnel = A_evap_fan_inlet/A_evap;
+                            angle_evap_funnel = atan((D_evap_eq - D_evap_fan_inlet)/(H_evap/2));
+                            angle_evap_funnel = angle_evap_funnel*180/Pi;
+                            K_evap_funnel = ANGLE_AREA_CONTRACTION(A_ratio_evap_funnel, angle_evap_funnel);
+                            V_evap_fan_inlet = V_inside/A_evap_fan_inlet;
+                            headLoss_evap_funnel = (K_evap_funnel/2)*(V_evap_fan_inlet)^2;
+                        % Fan
+                            V_air_evap_fan_inlet = V_inside/A_evap_fan_inlet;
+                            V_air_evap_fan_outlet = V_inside/A_evap_fan_outlet;
+                            if (A_evap_fan_outlet > A_evap_fan_inlet)
+                                A_ratio_evap_fan = A_evap_fan_inlet/A_evap_fan_outlet;
+                                angle_evap_fan = atan((Deff_evap_fan_outlet - D_evap_fan_inlet)/((W_evap_fan_outlet + D_evap_fan_inlet)/2));
+                                angle_evap_fan = angle_evap_fan*180/Pi;
+                                K_evap_fan_A = ANGLE_AREA_CONTRACTION(A_ratio_evap_fan,angle_evap_fan);
+                                headLoss_evap_fan_A = (K_evap_fan_A/2)*(V_air_evap_fan_inlet)^2;
+                            else 
+                                A_ratio_evap_fan = A_evap_fan_outlet/A_evap_fan_inlet;
+                                angle_evap_fan = atan((D_evap_fan_inlet - Deff_evap_fan_outlet)/((W_evap_fan_outlet + D_evap_fan_inlet)/2));
+                                angle_evap_fan = angle_evap_fan*180/Pi;
+                                K_evap_fan_A = ANGLE_AREA_CONTRACTION(A_ratio_evap_fan,angle_evap_fan);
+                                headLoss_evap_fan_A = (K_evap_fan_A/2)*(V_air_evap_fan_outlet)^2;
+                            end
+                            A_fan_evap = Pi*(D_evap_fan/2)^2;
+                            V_air_evap_fan = V_outside/A_fan_evap;
+                            headLoss_evap_fan_90b = (f_EfanA/2)*LeD90b*(V_air_evap_fan)^2;
+                            headLoss_evap_fan = headLoss_evap_fan_A + headLoss_evap_fan_90b;
+                        % Fan Power
+                            headLoss_evap_filter_total = (1/(DENSITY_air_avg_evap*9.81))*(dP_preF + dP_HEPA + dP_carbon);
+                            headLoss_evap_total = headLoss_evap_inlet + headLoss_evap_filter_total + headLoss_evap + headLoss_evap_funnel + headLoss_evap_fan;
+                            dP_total_evap = headLoss_evap_total*DENSITY_air_inside*9.81;
+                            W_evap_fan_NEW = SF_fan*(headLoss_evap_total + 9.81*(H_evap/2))*DENSITY_air_inside*V_inside;                  
+                        %FAN SELECTIION FUNCTION
+                            [m_evap_fan,D_evap_fan_inlet,D_evap_fan,L_evap_fan_outlet,W_evap_fan_outlet,V_rate_Efan,dP_evap_fan,E_fan_evap,V_fan_evap] = FAN_SELECTION(dP_total_evap);                 
+                        %Checks if new work is almost equal to previous work (Convergence)
+                            if ie < 2      
+                                YES_Efan = 0;
+                                ie = ie + 1;
+                            else
+                                YES_Efan = 1;
+                            end
+                        end
+                    % Loop set back to open when finished
+                        YES_Efan = 0;
+%--------------------------------------------------------------------------
+% Condenser Air Flow
+        
+                    % looping counter
+                        ic = 0;
+                        while YES_Cfan == 0
+                            fprintf('\n                           >>START YES_Cfan\n');                    
+                        % Calculating friction factor assuming laminar flow
+                            m_outside = V_outside*DENSITY_air_outside;
+                        % Square Duct Hydraulic Diameter
+                            A_cond_fan_outlet = L_cond_fan_outlet*W_cond_fan_outlet;
+                            P_cond_fan_outlet = 2*L_cond_fan_outlet + 2*W_cond_fan_outlet;
+                            Deff_cond_fan_outlet = 4*A_cond_fan_outlet/P_cond_fan_outlet;       
+                            Renolds_air_CfanA = 4*m_outside/(Pi*Deff_cond_fan_outlet*VISCOSITY_air_outside);
+                        % laminar Renolds Number approximently corrected for turbulent flow
+                            f_CfanA = 10*64/Renolds_air_CfanA;
+                        % Inlet
+                            headLoss_cond_inlet = (K_cond_inlet/2)*(V_air_cond)^2;
+                        % Window Tubing in
+                            A_window_tubing = Pi*(D_window_tubing/2)^2;
+                            V_air_window_tubing = V_outside/A_window_tubing;
+                            L_window_tubing = 3;    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                            headLoss_window_tubing_in = (f_CfanA/2)*(L_window_tubing/D_window_tubing)*(V_air_window_tubing)^2;
+                            Renolds_air_WT = DENSITY_air_avg_cond*V_air_window_tubing*D_window_tubing/VISCOSITY_air_avg_cond;                                               
+                        % Inlet Funnel
+                            A_ratio_cond_funnel_in = A_window_tubing/A_cond;
+                            angle_cond_funnel_in = atan((D_cond_eq - D_window_tubing)/(H_cond/2));      
+                            angle_cond_funnel_in = angle_cond_funnel_in*180/Pi;
+                            K_cond_funnel_in = ANGLE_AREA_EXPANSION(angle_cond_funnel_in);
+                            headLoss_cond_funnel_in = (K_cond_funnel_in/2)*(V_air_window_tubing)^2;
+                        % Filter
+                            dP_cond_preF = PREF(V_air_cond);
+                        % Condener
+                            A_cond_fins = H_cond*t_fins*N_cond_fins;
+                            A_cond_pipe = D_ref_pipe*N_rows_cond*H_cond*1.3 - t_fins*N_cond_fins*D_ref_pipe_outer;
+                            A_ratio_cond_in = (A_cond - A_cond_pipe - A_cond_fins)/A_cond;
+                            A_ratio_cond_out = A_ratio_cond_in;
+                            K_cond_in = INSTANT_AREA_CONTRACTION(A_ratio_cond_in);
+                            K_cond_out = INSTANT_AREA_EXPANSION(A_ratio_cond_out);
+                            V_air_cond = V_outside/(A_cond - A_cond_pipe - A_cond_fins);
+                            headLoss_cond_in = (K_cond_in/2)*(V_air_cond)^2;
+                            headLoss_cond_out = (K_cond_out/2)*(V_air_cond)^2;
+                            headLoss_cond = headLoss_cond_in + headLoss_cond_out;
+                        % Funnel Out (to fan)
+                            A_cond_fan_inlet = Pi*(D_cond_fan_inlet/2)^2;
+                            A_ratio_cond_funnel_out = A_cond_fan_inlet/A_cond;
+                            angle_cond_funnel_out = atan((D_cond_eq - D_cond_fan_inlet)/(H_cond/2));
+                            angle_cond_funnel_out = angle_cond_funnel_out*180/Pi;
+                            K_cond_funnel_out = ANGLE_AREA_CONTRACTION(A_ratio_cond_funnel_out, angle_cond_funnel_out);
+                            V_cond_fan_inlet = V_outside/A_cond_fan_inlet;
+                            headLoss_cond_funnel_out = (K_cond_funnel_out/2)*(V_cond_fan_inlet)^2;
+                        % Fan
+                            V_air_cond_fan_inlet = V_outside/A_cond_fan_inlet;
+                            V_air_cond_fan_outlet = V_outside/A_cond_fan_outlet;
+                            if (A_cond_fan_outlet > A_cond_fan_inlet) 
+                                A_ratio_cond_fan = A_cond_fan_inlet/A_cond_fan_outlet;
+                                angle_cond_fan = atan((Deff_cond_fan_outlet - D_cond_fan_inlet)/((W_cond_fan_outlet + D_cond_fan_inlet)/2));
+                                K_cond_fan_A = ANGLE_AREA_CONTRACTION(A_ratio_cond_fan,angle_cond_fan);
+                                headLoss_cond_fan_A = (K_cond_fan_A/2)*(V_air_cond_fan_inlet)^2;
+                            else 
+                                A_ratio_cond_fan = A_cond_fan_outlet/A_cond_fan_inlet;
+                                angle_cond_fan = atan((D_cond_fan_inlet - Deff_cond_fan_outlet)/((W_cond_fan_outlet + D_cond_fan_inlet)/2));
+                                K_cond_fan_A = ANGLE_AREA_CONTRACTION(A_ratio_cond_fan,angle_cond_fan);
+                                headLoss_evap_fan_A = (K_cond_fan_A/2)*(V_air_cond_fan_outlet)^2;
+                            end
+                            A_fan_cond = Pi*(D_cond_fan/2)^2;
+                            V_air_cond_fan = V_outside/A_fan_cond;
+                            headLoss_cond_fan_90b = (f_CfanA/2)*LeD90b*(V_air_cond_fan)^2;
+                            headLoss_cond_fan = headLoss_cond_fan_A + headLoss_cond_fan_90b;
+                        % Exhuast Duct
+                            L_cond_exDuct = 0.4; %%%%%%%%%%%%%%%%%%%%
+                            D_cond_exDuct = D_window_tubing;
+                            A_cond_exDuct = Pi*(D_cond_exDuct/2)^2;
+                            V_air_exDuct = V_outside/A_cond_exDuct;
+                            headLoss_cond_exDuct_L = (f_CfanA/2)*(L_cond_exDuct/D_cond_exDuct)*(V_air_exDuct)^2;
+                            headLoss_cond_exDuct_90b = (f_CfanA/2)*LeD90b*((V_air_exDuct))^2;
+                            headLoss_cond_exDuct = headLoss_cond_exDuct_L + headLoss_cond_exDuct_90b;
+                        % WindoW tubing Out
+                            headLoss_window_tubing_out = headLoss_window_tubing_in;        % Tubing Length is the same in and out
+                        % Fan Power
+                            headLoss_cond_filter = (1/(DENSITY_air_outside*9.81))*dP_cond_preF;
+                            headLoss_cond_total = headLoss_cond_inlet + headLoss_window_tubing_in + headLoss_cond_funnel_in + headLoss_cond_filter + headLoss_cond;
+                            headLoss_cond_total = headLoss_cond_total + headLoss_cond_funnel_out + headLoss_cond_fan + headLoss_cond_exDuct + headLoss_window_tubing_out;
+                            dP_total_cond = headLoss_cond_total*9.81*DENSITY_air_outside;
+                            W_cond_fan_new = SF_fan*(headLoss_cond)*DENSITY_air_outside*V_outside;            
+                        %FAN SELECTIION -------------------------------------------------------
+                            [m_cond_fan,D_cond_fan_inlet,D_cond_fan,L_cond_fan_outlet,W_cond_fan_outlet,V_rate_fanC,dP_cond_fan,E_fan_cond,V_fan_cond] = FAN_SELECTION(dP_total_cond);        
+                        % Condenser will always have higher pressure loss as the
+                        % window tubing diameter is decreased until the pressure of
+                        % the flow increases to match the fan pressure. Both
+                        % require the same flow rate so the condenser fan will be
+                        % selected for both.
+                            [m_evap_fan,D_evap_fan_inlet,D_evap_fan,L_evap_fan_outlet,W_evap_fan_outlet,V_rate_Efan,dP_evap_fan,E_fan_evap,V_fan_evap] = FAN_SELECTION(dP_total_cond);              
+                        %Checks if new work is almost equal to previous work (Convergence)
+                            if ic < 2      
+                                YES_Cfan = 0;
+                                ic = ic + 1;
+                            else
+                                YES_Cfan = 1;
+                            end
+                        end
+                    % Loop set back to open when finished
+                        YES_Cfan = 0;                       
+%--------------------------------------------------------------------------
+% Refrigerant Losses
+        
+                    % Connective Pipe Length GEOMETRIC RELATIONS
+                        L_ref_HpV = 0.2;         %%%%%%%%%%%%%%%%%
+                        L_ref_HpL = 0.2;             %%%%%%%%%
+                        L_ref_LpV = 0.2;          %%%%%%%%
+                        L_ref_LpLV = 0.2;           %%%%%%%%%%%
+                        A_ref_pipe = Pi*(D_ref_pipe/2)^2;
+                        V_ref_HpV = m_ref/(DENSITY_ref_HpV*A_ref_pipe);
+                        V_ref_HpL = m_ref/(DENSITY_ref_HpL*A_ref_pipe);
+                        V_ref_LpV = m_ref/(DENSITY_ref_LpV*A_ref_pipe);
+                        V_ref_LpLV = m_ref/(DENSITY_ref_LpLV*A_ref_pipe);
+                        V_ref_avg = (V_ref_HpV + V_ref_HpL + V_ref_LpV + V_ref_LpLV)/4;
+                    % Friction Factor with turbulent correction
+                        f_copper_HpV = 10*64/Renolds_ref_HpV;
+                        f_copper_HpL = 10*64/Renolds_ref_HpL;
+                        f_copper_LpV = 10*64/Renolds_ref_LpV;
+                        f_copper_LpLV = 10*64/Renolds_ref_LpLV;
+                        f_copper_avg = (f_copper_HpV + f_copper_HpL + f_copper_LpV + f_copper_LpLV)/4;
+                        headLoss_M_refL_HpV = (f_copper_HpV/2)*((V_ref_HpV)^2)*(L_ref_HpV/D_ref_pipe);
+                        headLoss_M_refL_HpL = (f_copper_HpL/2)*((V_ref_HpL)^2)*(L_ref_HpL/D_ref_pipe);
+                        headLoss_M_refL_LpV = (f_copper_LpV/2)*((V_ref_LpV)^2)*(L_ref_LpV/D_ref_pipe);
+                        headLoss_M_refL_LpLV = (f_copper_LpLV/2)*((V_ref_LpLV)^2)*(L_ref_LpLV/D_ref_pipe);
+                        headLoss_M_refL = headLoss_M_refL_HpV + headLoss_M_refL_HpL + headLoss_M_refL_LpV + headLoss_M_refL_LpLV;
+                    % Connective Pipe Bends
+                        r_bend_ref_pipe = D_ref_pipe_outer/2 + Reff_evap;
+                        rD = r_bend_ref_pipe/D_ref_pipe;
+                        LeD90b_ref = NINTYBEND(rD);
+                        headLoss_m_ref90b = N_90b*(f_copper_avg/2)*LeD90b_ref*(V_ref_avg)^2;
+                    % Evaporator
+                        f_copper_avg_evap = (f_copper_LpLV + f_copper_LpV)/2;
+                        V_ref_avg_evap = (V_ref_LpV + V_ref_LpLV)/2;
+                        headLoss_ref_evap_L = (f_copper_avg_evap/2)*(L_coils_evap/D_ref_pipe)*(V_ref_avg_evap)^2;
+                        headLoss_ref_evap_90b = (f_copper_avg_evap/2)*LeD90b_ref*(V_ref_avg_evap)/2;
+                        headLoss_ref_evap = headLoss_ref_evap_L + N_rows_evap*2*headLoss_ref_evap_90b;
+                    % Condenser
+                        f_copper_avg_cond = (f_copper_HpV + f_copper_HpL)/2;
+                        V_ref_avg_cond = (V_ref_HpV + V_ref_LpV)/2;
+                        headLoss_ref_cond_L = (f_copper_avg_cond/2)*(L_coils_cond/D_ref_pipe)*(V_ref_avg_cond)^2;
+                        headLoss_ref_cond_90b = (f_copper_avg_cond/2)*LeD90b_ref*(V_ref_avg_cond)/2;
+                        headLoss_ref_cond = headLoss_ref_cond_L + N_rows_cond*2*headLoss_ref_cond_90b;
+                    % Compressor Power
+                        headLoss_ref_total = headLoss_evap + headLoss_cond + headLoss_M_refL + headLoss_m_ref90b;
+                    % Evaluated at the average refrigerant density
+                        W_compressor_loss_new = SF_ref*m_ref*((P_high/DENSITY_ref_HpV - P_low/DENSITY_ref_LpLV) + headLoss_ref_total);
+                        W_compressor_loss_new = W_compressor_loss_new/1000;
+                        if abs(W_compressor_loss_new - W_compressor_loss) < 0.00001
+                                YES_Wcomp = 1;
+                        else
+                                W_compressor_loss = W_compressor_loss_new;
+                                YES_Wcomp = 0;
+                        end
+                    end
+               % Loop set back to open when finished
+                    YES_Wcomp = 0;
+               % Percentage of compressor work that is from friction loss
+                    Percent_loss = W_compressor_loss/W_compressor;
+               % Checks if loss is greater then 10% of total compressor work
+                    if W_compressor_loss/W_compressor > 1    % (%)
+                        D_ref_pipe = D_ref_pipe + 0.0001;
+                        YES_D_ref = 0;
+                    else
+                        YES_D_ref = 1;
+                    end
+                end
+            % Loop set back to open when finished
+                YES_D_ref = 0;
+            % Which has highest number of rows to set height
+                if N_rows_cond > N_rows_evap
+                    N_rows = N_rows_cond;
+                    N_rows_evap = N_rows_evap - 2;
+                elseif N_rows_evap > N_rows_cond
+                    N_rows = N_rows_evap;
+                    N_rows_cond = N_rows_evap - 2;
+                else
+                    N_rows = N_rows_cond;
+                end
+            % True Height of Evaporator based on diemensions
+                H_evap_true = 2*(Reff_cond + D_ref_pipe_outer/2)*(N_rows + 1);
+            % Decrease Effective Fin Radius until the actual height is equal to the
+            % Desired Height
+                if abs(H_evap_true - H_evap) > 0.001
+                    H_evap = H_evap_true;
+                    YES_Hevap = 0;
+                else
+                    YES_Hevap = 1;
+                end
+            end
+            YES_Hevap = 0;
+        % Length of heat exchanger Coil is over estimated when trying to discretly 
+        % fit to N_rows = 2,4,6... and N_cols = 3,5,7... 
+            if L_coils_cond > L_coils_evap
+                N_rows_evap = N_rows_evap - 2;
+            elseif L_coils_evap > L_coils_cond
+                N_rows_cond = N_rows_cond - 2;
+            end
+            % Increases air volume flow rate to match selected fans
+            if V_rate_fanC - V_outside < 0
+                FACTOR = FACTOR - 0.1;
+                YES_FACTOR = 0;
+            else
+                YES_FACTOR = 1;
+            end
+        end
+    % Set Loop back to open after
+        YES_FACTOR = 0;
+        if dP_cond_fan - dP_total_cond > 1
+            D_window_tubing = D_window_tubing - 0.001;
+            YES_WT = 0;
+        else
+            YES_WT = 1;
+        end
+    end
+
+     
+% Compressor Selection
+    [m_compressor,E_compressor] = COMPRESSOR_SELECTION(W_compressor); 
+
+%--------------------------------------------------------------------------
+% Electrical
+% Off Grid Energy load, only the evaporator air flow fan is required for filtration
+    E_loadTotal = E_fan_cond;  
+    E_loadTotal_cooling = E_fan_cond + E_fan_evap + E_compressor;
+% Required Battery Capacity needed to sustain load for a desired runtime(Watt Hours)
+    C_battery = E_loadTotal*t_runtime; 
+    C_battery_cooling = E_loadTotal_cooling*t_runtime;
+% Battery SELECTION
+% Battery selection based on required capacity
+    if C_battery < 1140
+        m_battery = 2;
+        C_battery_actual = 1140;
+        H_battery = 0.05;
+    elseif C_battery < 2400 && C_battery > 1140
+        m_battery = 3;                                %(kg)
+        C_battery_actual = 2400;                      %(Watts Hours)
+        H_battery = 0.06;
+    elseif C_battery < 2880 && C_battery > 2400
+        m_battery = 4;                        
+        C_battery_actual = 2880; 
+        H_battery = 0.07;
+    elseif C_battery < 4800 && C_battery > 2880
+        m_battery = 5;                        
+        C_battery_actual = 4800; 
+        H_battery = 0.08;
+    end
+% Capacity in Amp hours
+    C_battery_actual = C_battery_actual/48;
+    C_battery_cooling = C_battery_cooling/48;
+%--------------------------------------------------------------------------
+% Structural
+
+% Drip Tray
+% Saturated Water Vapor partial pressure function
+    Pv_air_inside = MOIST_AIR(T_inside);
+    Pv_air_supply = MOIST_AIR(T_supply);
+% Specific Humidity in [kg/kg,dryair]
+    SH_inside = 0.662*Pv_air_inside/(P_atm - Pv_air_inside); 
+    SH_supply = 0.662*Pv_air_supply/(P_atm - Pv_air_supply);
+% Absolute Humidity
+    AH_inside = SH_inside*(RH_inside*0.01);
+% Calculate RH of supply
+    if AH_inside > SH_supply
+        AH_supply = SH_supply;
+        RH_supply = 100;
+        m_water = AH_inside - SH_supply;
+    else
+        AH_supply = AH_inside;
+        RH_supply = 100*AH_supply/SH_supply;
+        m_water = 0;
+    end
+% Volume of Condensed water [m^3/s]
+    V_water = (m_water)*V_inside*DENSITY_air_avg_evap;
+% Drip Tray Volume [m^3]
+    H_dripTray = H_battery;
+    L_dripTray = 0.2;
+    W_dripTray = 0.3;
+    V_dripTray = L_dripTray*W_dripTray*H_dripTray; %%%%%%%%%%%%%%%%
+% Estimated Fill time based on available size
+    Fill_time = V_dripTray/V_water;
+
+% Frame Structure
+% Converting dimensions names, the solidworks model used slightly different
+% variable names so they must be converted from the above analysis to be used by the
+% structural analysis below
+H_HE = H_evap;
+L_Pipe_E = L_coils_evap_new;
+N_PipeColumn_E = N_col_evap;
+N_PipeRow_E = N_rows_evap;
+D_Pipe = D_ref_pipe;
+t_Pipe = t_ref_pipe;
+t_Fins = t_fins;
+N_Fins_E = N_evap_fins;
+% Geometric Equations
+WF = 1.3;
+W_HE = WF*H_HE;
+T_HE = N_PipeColumn_E*H_HE/(N_PipeRow_E +1);
+D_Gap = 2*(D_Pipe/2 + Reff_cond);
+W_BPl = W_HE + 2*D_Gap; 
+L_BPl = (2*(1 + W_HE/3 + 1 + 1+ W_cond_fan_outlet/2)) + (N_col_cond)*W_HE/(N_rows_cond + 1) + (N_PipeColumn_E)*W_HE/(N_PipeRow_E + 1)+ 4*0.5 + 2*0.5 - 4*(1-0.551) - 2.1;   
+H_Unit = H_battery + H_HE;        
+L_Hood = H_HE/4;        
+H_Hood = H_HE;                      
+L_DripTray = 1 + 4*0.5 + ((N_PipeColumn_E*W_HE)/(N_PipeRow_E +1));
+
+%Weights from other sections
+    Wt_Pipe = (pi/4)*(D_Pipe^2 - (D_Pipe - 2*t_Pipe)^2)*L_Pipe_E;
+    Wt_Fins = H_HE*T_HE*t_Fins*N_Fins_E;
+    Wt_HE = Wt_Pipe + Wt_Fins;
+    Wt_DripTray = L_DripTray*W_BPl*H_battery/density_Water;
+    Wt_Compressor = m_compressor;
+    Wt_Fan_E = m_evap_fan;
+    Wt_Fan_C = m_evap_fan;
+    Wt_Battery = m_battery;
+% Structure components initial guess weights
+    Wt_TP = 1;             % [Kg]
+    Wt_FB = 1;             % [Kg]
+    Wt_BP = 1;             % [Kg]
+    Wt_BPl = 1;            % [Kg]
+    Wt_Hood = 1;           % [Kg]
+% Masses and dimensions are needed to calculate resultant forces and
+% required thicknesses, so they are first set at a guess value and
+% iteratively calculated until convergence. Since there are too many
+% parameters to measure convergence directly, the system is looped 10 times 
+%Start of Loop
+for i = 1:10
+%Parameterized Dimensions calculated 
+%Top Panel 
+    Wt_Load_TP = Wt_TP*g;
+    t_TP = 0.00001;
+    SF_TP = 0;
+    % Loops increasing the thickness until the desired safety factor is reached
+    while SF_TP <= SF   
+        t_TP = t_TP + 0.00001;
+        SF_TP = Yeild_GSteel*8*((T_HE*t_TP^3)/12 + 0.01^2*0.02*t_TP/100)/(t_TP*(F_D + Wt_Load_TP)*W_HE/2);
+    end
+    disp('t_TP =');
+    disp(t_TP);
+    D_TP_B = sqrt(SF*4*(F_D + F_Hx/2)/(pi*ShearYeild_CSteel));
+    disp('D_TP_B =');
+    disp(D_TP_B);
+% Frame Bracket
+    Wt_Load_FB = Wt_Load_TP/2 + (Wt_FB + Wt_HE/2)*g;
+    t_FB = 0.00001;
+    SF_FB = 0;
+% Loops increasing the thickness until the desired safety factor is reached
+while SF_FB <= SF
+    t_FB = t_FB + 0.0001;
+    SF_FB = Yeild_GSteel/((6*(H_HE*F_D/2)/(T_HE*t_FB^2))+(Wt_Load_FB/(T_HE*t_FB)));
+end
+    disp('t_FB =');
+    disp(t_FB);
+%Bottom Panel
+    Wt_Load_BP = Wt_BP*g + 2*Wt_Load_FB; 
+    D_BP_B = sqrt(SF*2*(F_D + Wt_Load_BP/2)/(pi*ShearYeild_CSteel));
+    disp('D_BP_B =');
+    disp(D_BP_B);
+    t_BP = SF*(F_D + Wt_Load_BP/2)/(2*D_BP_B*Yeild_GSteel);
+    disp('t_BP =');
+    disp(t_BP);
+%Base Plate
+    Wt_Load_BPl = 2*Wt_Load_BP + (Wt_BPl + Wt_Compressor + Wt_Fan_C + Wt_Fan_E + Wt_DripTray + Wt_Battery + Wt_Hood)*g;
+    t_BPl = sqrt((SF*3*(Wt_Load_BPl + F_D)*W_BPl)/(4*L_BPl*Yeild_PVC));
+    disp('t_BPl =');
+    disp(t_BPl);
+%Hood
+    t_Hood = sqrt((SF*3*F_D*L_Hood)/(4*H_Hood*Yeild_PVC));
+    disp('t_Hood =');
+    disp(t_Hood);
+% Component Weight Equations
+    Wt_TP = (W_BPl*T_HE*t_TP)*density_GSteel;
+    disp('Wt_TP =');
+    disp(Wt_TP);
+    Wt_FB = (H_HE*T_HE*t_FB + 2*T_HE*D_Gap*t_FB)*density_GSteel;
+    disp('Wt_FB =');
+    disp(Wt_FB);
+    Wt_BP = (W_BPl*T_HE*t_BP + 2*H_battery*T_HE*t_BP)*density_GSteel;
+    disp('Wt_BP =');
+    disp(Wt_BP);
+    V_BPl = W_BPl*L_BPl*t_BPl + 2*H_battery*L_BPl*t_BPl;
+    Wt_BPl = (W_BPl*L_BPl*t_BPl + 2*H_battery*L_BPl*t_BPl)*density_PVC;
+    disp('Wt_BPl =');
+    disp(Wt_BPl);
+    disp('V_BPl =');
+    disp(V_BPl);
+    Wt_Hood = ((2*H_Unit + W_BPl)*L_BPl*t_Hood)*density_PVC;
+    disp('Wt_Hood =');
+    disp(Wt_Hood);
+    Wt_Total = Wt_Load_BPl/g;
+    disp('Wt_Total =');
+    disp(Wt_Total);
+end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+%__________________________________________________________________________
+% FUNCTIONS
+%__________________________________________________________________________
+function [D,K,V,Pr,h] = PROPERTIES_AIR(T)
+    % For specific temperatures of air
+    % MATLAB curve fitting code from data tables
+        % T = [0,5,10,15,20,25,30,35,40,45,50,60,70];
+        % T = T';
+        % Temperature range K (for h)
+        %TK = [270,280,285,290,295,298,300,305,310,315,320,325,330,340];
+        %TK = TK';
+        %h = [270.11,280.13,285.14,290.16,295.17,298.18,300.19,305.22,310.24,315.27,320.29,325.31,330.34,340.42];
+        %h = h';
+        % D = [1.292,1.269,1.246,1.225,1.204,1.184,1.164,1.145,1.127,1.109,1.092,1.059,1.028];
+        % D = D';
+        % K = [0.02364,0.02401,0.02439,0.02476,0.02514,0.02551,0.02588,0.02625,0.02662,0.02699,0.02735,0.02808,0.02881];
+        % K = K';
+        % V = [0.00001729,0.00001754,0.00001778,0.00001802,0.00001825,0.00001849,0.00001872,0.00001895,0.00001918,0.00001941,0.00001963,0.00002008,0.00002052];
+        % V = V';
+        % Pr = [0.7362,0.7350,0.7336,0.7323,0.7309,0.7296,0.7282,0.7268,0.7255,0.7241,0.7228,0.7202,0.7177];
+        % Pr = Pr';
+        % POLYNOMIALS
+        % pD = fit(T,D,'poly2');
+        % pK = fit(T,K,'poly4');
+        % pV = fit(T,V,'poly4');
+        % pPr = fit(T,Pr,'poly4');
+    %END
+    % Results:
+    % Curve Fit for Density, 4th degree polynomial fit
+    D = (1.044e-10)*T^4 + (-5.126e-08)*T^3 + (1.656e-05)*T^2 + (-0.004715)*T + 1.292;
+    % Curve Fit for Thermal Conductivity, 4th degree polynomial fit
+    K = (1.077e-11)*T^4 + (-1.474e-09)*T^3 + (4.018e-08)*T^2 + (7.458e-05)*T + 0.02364;
+    % Curve Fit for Dynamic Viscosity, 4th degree polynomial fit
+    V = (-6.647e-15)*T^4 + (1.111e-12)*T^3 + (-9.631e-11)*T^2 + (4.969e-08)*T + (1.729e-05);
+    % Cruve Fit for Relative Pressure, 4th degree polynomial fit
+    Pr = (-6.394e-11)*T^4 + (1.571e-08)*T^3 + (-9.924e-07)*T^2 + (-0.0002502)*T + 0.7362;
+    % Curve Fit for Enthalpy, 4th degree polynomial fit
+    T = T + 273.15;       % (K)
+    h = (1.552e-08)*T^4 + (-1.893e-05)*T^3 + (0.008684)*T^2 + (-0.77)*T + 135.2;
+end
+%--------------------------------------------------------------------------
+function T = PROPERTIES_AIR_h(h)
+% Input enthalpy, output temperature
+% MATLAB curve fitting code from data tables
+    % h = [270.11,280.13,285.14,290.16,295.17,298.18,300.19,305.22,310.24,315.27,320.29,325.31,330.34,340.42];
+    %h = h';
+    % TK = [270,280,285,290,295,298,300,305,310,315,320,325,330,340];
+    % TK = TK';
+    % POLYNOMIAL
+    % pTK = fit(h,TK,'poly4');
+    %END
+% Results:
+% Curve Fit for Density, 2nd degree polynomial fit
+T = (-3.902e-05)*h^2 + (1.019)*h + (-2.521);
+T = T - 273.15;
+end
+%--------------------------------------------------------------------------
+function Pv = MOIST_AIR(T)
+    % Input enthalpy, output temperature
+    % MATLAB curve fitting code from data tables
+        % T = [-20,-15,-10,-5,0,5,10,15,20,25,30,35,40,45,50,55,60,65,70,75,80];
+        % T = T';
+        % Pv = [103.2,165.2,259.2,401.5,610.8,871.9,1227,1704,2337,3167,4243,5623,7378,9585,12339,14745,19925,25014,31167,38554,47365];
+        % Pv = Pv';
+        % POLYNOMIAL
+        % pPv = fit(T,Pv,'poly4');
+        %END
+    % Results:
+    % Curve Fit for saturated Vapor partial pressure, 2nd degree polynomial fit
+    Pv = (0.0007593)*T^4 + (0.004595)*T^3 + (1.413)*T^2 + (53.86)*T + (593.8);
+end
+%--------------------------------------------------------------------------
+function [P,hf,hg,sf,sg] = PROPERTIES_REFsat(T)
+    % For specific saturation temperature of R410a
+    % MATLAB curve fitting code from saturation table data
+         % Temperature [C]
+         % T = [-30,-26.3,-25,-20,-15,-10,-5,0,5,10,15,20,25,30,35,40,45,50,55,60,65,70,75,80];
+         % T = T';
+         % Pressure [Kpa]
+         % P = [85.1,101.3,107.2,133.7,165.0,201.7,244.5,294.0,350.9,415.8,489.5,572.8,666.3,771.0,887.6,1017.0,1160.2,1318.1,1491.6,1681.8,1889,2117,2364.4,2633.6];
+         % P = P';
+         % Enthalpy of Liquid
+         % hf = [161.12,165.80,167.38,173.74,180.19,186.72,193.32,200.0,206.75,213.58,220.49,227.49,234.59,241.79,249.10,256.54,264.11,271.83,279.72,287.79,296.09,304.64,313.51,322.79];
+         % hf = hf';
+         % Enthalpy of Vapor
+         % hg = [379.8,382.16,382.95,386.08,389.2,392.28,395.34,398.36,401.32,404.23,407.07,409.84,412.51,415.08,417.52,419.82,421.96,423.91,425.65,427.13,428.3,429.11,429.45,429.19];
+         % hg = hg';
+         % Entropy of Liquid
+         % sf = [0.8499,0.8690,0.8754,0.9007,0.9258,0.9507,0.9755,1,1.0243,1.0485,1.0725,1.0963,1.1201,1.1437,1.1673,1.1909,1.2145,1.2381,1.2619,1.2857,1.3099,1.3343,1.3592,1.3849];
+         % sf = sf';
+         % Entropy of Vapor
+         % sg = [1.7493,1.7453,1.7441,1.7395,1.7354,1.7319,1.7288,1.7262,1.7239,1.7218,1.72,1.7183,1.7168,1.7153,1.7139,1.7123,1.7106,1.7088,1.7066,1.7040,1.7008,1.6970,1.6923,1.6862];
+         % sg = sg';
+         % POLYNOMIALS
+         % pP = fit(T,P,'poly4');
+         % phf = fit(T,hf,'poly4');
+         % phg = fit(T,hg,'poly4');
+         % psf = fit(T,sf,'poly4');
+         % psg = fit(T,sg,'poly4');
+    %END
+    % Results:
+    % Curve Fit for Saturation Pressure, 4th degree polynomial fit
+    P = (2.435e-06)*T^4 + (0.0008764)*T^3 + (0.1468)*T^2 + (10.64)*T + (294.1);
+    % Curve Fit for hf, 4th degree polynomial fit
+    hf = (1.483e-07)*T^4 + (-1.158e-06)*T^3 + (0.001508)*T^2 + (1.345)*T + (200);
+    % Cruve Fit for hg, 8th degree polynomial fit
+    hg = (-2.042e-07)*T^4 + (-5.447e-06)*T^3 + (-0.0008415)*T^2 + (0.5938)*T + (398.3);
+    % Curve Fit for sf, 4th degree polynomial fit
+    sf = (3.528e-10)*T^4 + (6.321e-09)*T^3 + (-3.768e-06)*T^2 + (0.00489)*T + (1);                           
+    % Curve Fit for sg, 4th degree polynomial fit
+    sg = (-3.545e-10)*T^4 + (-5.812e-08)*T^3 + (7.107e-06)*T^2 + (-0.0005105)*T + (1.726);
+end
+%--------------------------------------------------------------------------
+function h = PROPERTIES_REFsuperH(s)
+    % MATLAB curve fitting code from Superheated R134a tables at constant pressure (1200 KPa)
+        % Entropy [KJ/KgK]
+        % s = [1.7237,1.7584,1.7908,1.8217,1.8514,1.8801,1.9081,1.9354,1.9621,1.9884,2.0143,2.0398,2.0649,2.0898];
+        % s = s';
+        % Enthalpy [KJ/Kg]
+        % h = [426.84,438.21,449.18,459.92,470.55,481.13,491.70,502.31,512.97,523.70,534.51,545.43,556.44,567.57];
+        % h = h';
+        % POLYNOMIALS
+        % pT = fit(s,T,'poly2');
+        % ph = fit(s,h,'poly2');                             
+    % END
+    % Results:
+    % Curve fit for Enthalpy, 4th degree polynomial fit
+    h = (179.5)*s^2 + (-300.7)*s + (411.9);
+end
+%--------------------------------------------------------------------------
+function T = PROPERTIES_REFsuperT(h)
+
+    % MATLAB curve fitting code from Superheated R410a tables at constant pressure
+        % Enthalpy [KJ/Kg]
+        % h = [426.84,438.21,449.18,459.92,470.55,481.13,491.70,502.31,512.97,523.70,534.51,545.43,556.44,567.57];
+        % h = h';
+        % Temperature [C]
+        % T = [50,60,70,80,90,100,110,120,130,140,150,160,170,180];
+        % T = T';
+        % POLYNOMIALS
+        % pT = fit(h,T,'poly2');
+    % END
+    % Results:
+    T = (-4.428e-05)*h^2 + (0.9744)*h + (-358.4);
+end
+%--------------------------------------------------------------------------
+function [C,n] = NU_AIR_CONSTANTS(Re)
+    if Re < 4
+        C = 0.989;
+        n = 0.330;
+    elseif Re >= 4 && Re < 40
+        C = 0.911;
+        n = 0.385;
+    elseif Re >= 40 && Re < 4000
+        C = 0.683;
+        n = 0.466;
+    elseif Re >= 4000 && Re < 40000
+        C = 0.193;
+        n = 0.618;
+    elseif Re >= 40000
+        C = 0.027;
+        n = 0.805;
+    end
+end
+%--------------------------------------------------------------------------
+function efficiency = EFFICIENCY_FIN(DIM1,DIM2)
+    if DIM1 >= 0.5 && DIM1 < 1.25
+        % Curve Fit
+        efficiency = -70*DIM2^2 + 36*DIM2^3 - 2*DIM2^4 - 1.25*DIM2^5 + 100;             
+    elseif DIM1 >= 1.25 && DIM1 < 1.75
+        % Curve Fit
+        efficiency = -82*DIM2^2 + 44*DIM2^3 - 2*DIM2^4 - 1.87*DIM2^5 + 100;             
+    elseif DIM1 >= 1.75 && DIM1 < 2.5
+        % Curve Fit
+        efficiency = -90*DIM2^2 + 48*DIM2^3 - 2*DIM2^4 - 2.0*DIM2^5 + 100;             
+    elseif DIM1 >= 2.5 && DIM1 < 4
+        % Curve Fit
+        efficiency = -100*DIM2^2 + 55*DIM2^3 - 2*DIM2^4 - 2.7*DIM2^5 + 100;            
+    elseif DIM1 >= 4
+        % Curve Fit
+        efficiency = -121*DIM2^2 + 69*DIM2^3 - 2*DIM2^4 - 3.7*DIM2^5 + 100;            
+    else
+        efficiency = 0.1;
+    end
+end
+%--------------------------------------------------------------------------
+function LeD90b = NINTYBEND(rd)
+    % Curve Fit
+    LeD90b = 2.3*(1 - exp(-(rd - 2.5)))*(rd - 2.5) + 12;           
+end
+%--------------------------------------------------------------------------
+function [dP_preF,t_preF] = PREF(V)
+
+    Filter_power = 1;
+    if Filter_power == 1
+        % G2 Pre Filter
+        dP_preF = (8/0.5)*V;
+        t_preF = 0.010;
+    elseif Filter_power == 2
+        % G3 Pre Filter
+        dP_preF = (17/0.5)*V + 1;
+        t_preF = 0.020;
+    elseif Filter_power == 3
+        % G4 Pre Filter
+        dP_preF = (22/0.5)*V + 4;
+        t_preF = 0.020;
+    end
+end
+%--------------------------------------------------------------------------
+function [dP_HEPA,t_HEPA] = HEPA(V)
+    Filter_power = 1;
+    if Filter_power == 1
+        dP_HEPA = (102/0.35)*V + 5;
+        t_HEPA = 0.03;
+    elseif Filter_power == 2 || ilter_power == 3
+        dP_HEPA = (69/0.35)*v + 3;
+        t_HEPA = 0.04;
+    end
+end
+%--------------------------------------------------------------------------
+function K = ANGLE_AREA_CONTRACTION(A_ratio,angle)
+    % Define the matrix of K values 
+    K_values = [ 
+        0.50, 0.05, 0.05, 0.06, 0.12, 0.18, 0.24, 0.26; 
+        0.25, 0.05, 0.04, 0.07, 0.17, 0.27, 0.35, 0.41; 
+        0.10, 0.05, 0.05, 0.08, 0.19, 0.29, 0.37, 0.43 
+    ]; 
+    % Determine which row of K_values to use based on A2/A1 ratio 
+    if A_ratio > 0.25 
+        row = 1; 
+    elseif A_ratio > 0.10 
+        row = 2; 
+    else 
+        row = 3; 
+    end 
+    % Determine which column of K_values to use based on angle 
+    if angle < 15 
+        col = 2;
+    elseif angle >= 15 && angle < 45 
+        col = 3;
+    elseif angle >= 45 && angle < 75 
+        col = 4; 
+    elseif angle >= 75 && angle < 105 
+        col = 5; 
+    elseif angle >= 105 && angle < 135 
+        col = 6; 
+    elseif angle >= 135 && angle < 165 
+        col = 7; 
+    elseif angle >= 165 && angle < 180
+        col = 8; 
+    else 
+        disp("Invalid expansion angle");
+    end 
+    % Retrieve the corresponding K value 
+    K = K_values(row, col); 
+end
+    %--------------------------------------------------------------------------
+function K = ANGLE_AREA_EXPANSION(angle)
+    % Curve Fit
+    K = 0.07 - 0.07*exp(-angle/20);          
+end
+%--------------------------------------------------------------------------
+function K = INSTANT_AREA_CONTRACTION(A_ratio)
+    % Curve Fit
+    K = 0.5*(1 - A_ratio^2)^(3/2);           
+
+end
+%--------------------------------------------------------------------------
+function K = INSTANT_AREA_EXPANSION(A_ratio)
+    % Curve Fit
+    K = (1 - A_ratio^(7/10));               
+end
+%--------------------------------------------------------------------------
+function [m_fan,D_fan_inlet,D_fan,L_fan_outlet,W_fan_outlet,V_rate_fan,dP_fan,E_fan,V_fan] = FAN_SELECTION(dP_losses)
+    if dP_losses < 653.1
+        m_fan = 1.6;                                      %(kg)
+        D_fan_inlet = 0.0908;                                %(m)
+        D_fan = 0.159;                                   %(m)
+        L_fan_outlet = 0.079;                               %(m)
+        W_fan_outlet = 0.079;                               %(m)
+        V_rate_fan = 0.0928;                                 %(m^3/s)
+        dP_fan = 653.1;                                   %(Pa)
+        E_fan = 48*1.30;                                      %(Watts)
+        V_fan = 48;                                  %(V)
+    elseif dP_losses > 653.1
+        m_fan = 1.8;                                      %(kg)
+        D_fan_inlet = 0.12;                                %(m)
+        D_fan = 0.194;                                   %(m)
+        L_fan_outlet = 0.095;                               %(m)
+        W_fan_outlet = 0.095;                               %(m)
+        V_rate_fan = 0.138;                                 %(m^3/s)
+        dP_fan = 903.5;                                   %(Pa)
+        E_fan = 48*1.10;                                      %(Watts)
+        V_fan = 48;                                  %(V)
+    end
+end
+%-----------------------------------------------------------------------
+function [m_compressor,E_compressor] = COMPRESSOR_SELECTION(W_comp)
+% Compressor selection based off required work
+    if W_comp < 1.306
+        m_compressor = 2;                        %(kg)
+        E_compressor = 1120;                     % (W)
+    else 
+        disp("Invalid Compressor Work");
+    end
+end
+%-----------------------------------------------------------------------
+
+
+%__________________________________________________________________________
+%__________________________________________________________________________
+%__________________________________________________________________________
+    % -----------2. Write text to equation file(s) --------%
+	% Write the equations text file(s) that were linked within Solidworks.
+	% These files must have the exact same formatting as the original text
+	% File originally linked to Solidworks to ensure Solidworks can
+	% interpret them. 
+    % equation.XXXX is the text file name required to be read by Solidworks
+    % Variables 
+
+    PSF_DIMENSIONS = strcat(directory_prefix_string, '/groupSF5/SolidWorks/Equations/equation.XXXX');
+    fid = fopen(PSF_DIMENSIONS,'w+t');
+    fprintf(fid,strcat('"W_HE"=',num2str(W_HE),'\n\n'));
+    fprintf(fid,strcat('"t_TP"=',num2str(t_TP),'\n\n'));
+    fprintf(fid,strcat('"t_FP"=',num2str(t_FB),'\n\n'));
+    fprintf(fid,strcat('"t_BP"=',num2str(t_BP),'\n\n'));
+    fprintf(fid,strcat('"t_BPl"=',num2str(t_BPl),'\n\n'));
+    fprintf(fid,strcat('"t_BPP"=',num2str(t_Hood),'\n\n'));
+    fprintf(fid,strcat('"t_Fins"=',num2str(t_Fins),'\n\n'));
+    fprintf(fid,strcat('"D_Pipe"=',num2str(D_Pipe),'\n\n'));
+    fprintf(fid,strcat('"t_Pipe"=',num2str(t_Pipe),'\n\n'));
+    fprintf(fid,strcat('"WF"=',num2str(WF),'\n\n'));
+    fprintf(fid,strcat('"N_PipeRow_C"=',num2str(N_rows_cond),'\n\n'));
+    fprintf(fid,strcat('"N_PipeColumn_C"=',num2str(N_col_cond),'\n\n'));
+    fprintf(fid,strcat('"N_Fins_C"=',num2str(N_cond_fins),'\n\n'));
+    fprintf(fid,strcat('"N_PipeRow_E"=',num2str(N_rows_evap),'\n\n'));
+    fprintf(fid,strcat('"N_PipeColumn_E"=',num2str(N_PipeColumn_E),'\n\n'));
+    fprintf(fid,strcat('"N_Fins_E"=',num2str(N_Fins_E),'\n\n'));
+    fprintf(fid,strcat('"D_Fan_C"=',num2str(D_cond_fan),'\n\n'));
+    fprintf(fid,strcat('"D_FanInlet_C"=',num2str(D_cond_fan_inlet),'\n\n'));
+    fprintf(fid,strcat('"W_Fan_C"=',num2str(W_cond_fan_outlet),'\n\n'));
+    fprintf(fid,strcat('"D_Fan_E"=',num2str(D_evap_fan),'\n\n'));
+    fprintf(fid,strcat('"D_FanInlet_E"=',num2str(D_evap_fan_inlet),'\n\n'));
+    fprintf(fid,strcat('"W_Fan_E"=',num2str(W_evap_fan),'\n\n'));
+    fprintf(fid,strcat('"D_Compressor"=',num2str(10),'\n\n'));
+    fprintf(fid,strcat('"L_Compressor"=',num2str(25),'\n\n'));
+    fprintf(fid,strcat('"H_Battery"=',num2str(6),'\n\n'));
+    fprintf(fid,strcat('"L_Battery"=',num2str(20),'\n\n'));
+    fprintf(fid,strcat('"W_Battery"=',num2str(20),'\n\n'));
+    fprintf(fid,strcat('"D_TP_B"=',num2str(D_TP_B),'\n\n'));
+    fprintf(fid,strcat('"D_FB_B"=',num2str(D_BP_B),'\n\n'));
+    fprintf(fid,strcat('"D_BP_B"=',num2str(D_BP_B),'\n\n'));
+    fprintf(fid,strcat('"D_BPP_B"=',num2str(0.8),'\n\n'));    
+    fprintf(fid,strcat('"t_Hood"=',num2str(t_Hood),'\n\n'));
+    fprintf(fid,strcat('"D_Hood_B"=',num2str(0.8),'\n\n'));
+    fprintf(fid,strcat('"t_Handle"=',num2str(3),'\n\n'));
+    fprintf(fid,strcat('"D_handle_B"=',num2str(0.8),'\n\n'));
+    fprintf(fid,strcat('"t_Tube"=',num2str(D_window_tubing),'\n\n'));
+    fprintf(fid,strcat('"t_Duct"=',num2str(1),'\n\n'));
+    fprintf(fid,strcat('"D_Wheel"=',num2str(6),'\n\n'));
+    fprintf(fid,strcat('"L_WMount"=',num2str(4),'\n\n'));
+    fprintf(fid,strcat('"H_WMount"=',num2str(6.65),'\n\n'));
+    fprintf(fid,strcat('"t_FMount_C"=',num2str(0.5),'\n\n'));
+    fprintf(fid,strcat('"t_FMount_E"=',num2str(0.5),'\n\n'));
+    fprintf(fid,strcat('"t_preF_C"=',num2str(t_preF),'\n\n'));
+    fprintf(fid,strcat('"t_preF_E"=',num2str(t_preF),'\n\n'));
+    fprintf(fid,strcat('"t_carbon"=',num2str(t_carbon),'\n\n'));
+    fprintf(fid,strcat('"t_HEPA"=',num2str(t_HEPA),'\n\n'));
+    fclose(fid);
+
+%__________________________________________________________________________
+%__________________________________________________________________________
+%__________________________________________________________________________
+    % -----------3. Write text to log file ----------------%
+    % Write the log file used to present optimization results to the user.
+    % Declaring text files to be modified
+    log_file = strcat(directory_prefix_string,'/groupSF5/Log/groupSF5_LOG.TXT');
+       
+    %Create only one log file for the complete project. Keep the file easy
+	%to read by adding blank lines and sections. For string writing specifics, refer
+	%to MATLAB documentation links below:
+    % https://www.mathworks.com/help/matlab/ref/fopen.html
+    % https://www.mathworks.com/help/matlab/ref/strcat.html
+    % https://www.mathworks.com/help/matlab/ref/num2str.html
+    % '\n' inputs a 'newLine' on the string, akin to a 'return' key press. 
+    fid = fopen(log_file,'w+t');
+	fprintf(fid,'*=========================================================*\n\n'); 
+    fprintf(fid,'*---- Portable Smoke Filtration and Air Conditioning Device ---- *\n');
+	fprintf(fid,'*=========================================================*\n\n');    
+    fprintf(fid,'* >>START *\n\n');
+	fprintf(fid,'*_________________________________________________________*\n\n');   
+    fprintf(fid,'User Input Parameters: \n');
+	fprintf(fid,'*_________________________________________________________*\n\n');
+    fprintf(fid,strcat('Length of Room =',32,num2str(L_room),' [m]\n'));
+	fprintf(fid,strcat('Width of Room =',32,num2str(W_room),' [m]\n'));
+	fprintf(fid,strcat('Height of Room =',32,num2str(H_room), '[m]\n'));
+    fprintf(fid,strcat('>>Room Volume =',32,num2str(V_room), '[m^3]\n'));
+    fprintf(fid,strcat('T_inside =',32,num2str(T_inside),' [C]\n'));
+    fprintf(fid,strcat('RH_inside =',32,num2str(RH_inside),' [%]\n'));
+	fprintf(fid,strcat('T_outside =',32,num2str(T_outside),' [C]\n'));
+	fprintf(fid,strcat('Number of Occupants =',32,num2str(Noc), '[#]\n\n'));
+	fprintf(fid,strcat('Desired Off Grid Runtime =',32,num2str(t_runtime), '[Hours]\n\n'));    
+    fprintf(fid,'*_________________________________________________________*\n');
+    fprintf(fid,stract('* Optimized Dimensions and Quantities\n'));        
+    fprintf(fid,'*_________________________________________________________*\n');
+    fprintf(fid,'*---------------------------------------------------------*\n');
+    fprintf(fid,stract('Evaporator\n'));
+    fprintf(fid,'*---------------------------------------------------------*\n');
+	fprintf(fid,strcat('Length of Coils =',32,num2str(L_coils_evap),' [m]\n'));
+	fprintf(fid,strcat('Number of Pipe Rows =',32,num2str(N_rows_evap), '[#] = 2,4,6...\n'));
+    fprintf(fid,strcat('Number of Pipe Columns =',32,num2str(N_col_evap),' [#] = 3,5,7...\n'));
+	fprintf(fid,strcat('Number of Fins =',32,num2str(N_evap_fins),' [#]\n'));
+    fprintf(fid,strcat('Pre-Filter Thickness =',32,num2str(t_preF),' [#]\n'));
+    fprintf(fid,strcat('HEPA Filter Thickness =',32,num2str(t_HEPA),' [#]\n'));
+    fprintf(fid,strcat('Carbon Filter Thickness =',32,num2str(t_carbon),' [#]\n'));
+    fprintf(fid,'*---------------------------------------------------------*\n');    
+    fprintf(fid,stract('* Condenser\n'));
+    fprintf(fid,'*---------------------------------------------------------*\n');
+	fprintf(fid,strcat('Length of Coils =',32,num2str(L_coils_evap),' [m]\n'));
+	fprintf(fid,strcat('Number of Pipe Rows =',32,num2str(N_rows_evap), '[#] = 2,4,6...\n'));
+    fprintf(fid,strcat('Number of Pipe Columns =',32,num2str(N_col_evap),' [#] = 3,5,7...\n'));
+	fprintf(fid,strcat('Number of Fins =',32,num2str(N_evap_fins),' [#]\n'));
+    fprintf(fid,strcat('Pre-Filter Thickness =',32,num2str(t_preF),' [#]\n'));
+    fprintf(fid,strcat('Window Tubing Diameter =',32,num2str(D_window_tubing),' [m]\n'));    
+    fprintf(fid,'*---------------------------------------------------------*\n');   
+    fprintf(fid,stract('* Electrical\n'));
+    fprintf(fid,'*---------------------------------------------------------*\n');
+    fprintf(fid,strcat('Battery Voltage =',32,num2str(24), '[V]\n'));
+    fprintf(fid,strcat('Battery Capacity =',32,num2str(C_battery), '[Amp*Hours]\n'));
+    fprintf(fid,'*---------------------------------------------------------*\n');    
+    fprintf(fid,stract('* Structural\n'));
+    fprintf(fid,'*---------------------------------------------------------*\n');
+    fprintf(fid,strcat('Frame Top Panel Thickness =',32,num2str(t_TP), '[m]\n'));   
+    fprintf(fid,strcat('Frame Top Panel Bolt Diameter =',32,num2str(D_TP_B), '[m]\n')); 
+    fprintf(fid,strcat('Frame Bracket Thickness =',32,num2str(t_FB), '[m]\n')); 
+    fprintf(fid,strcat('Frame Bottom Panel Thickness =',32,num2str(t_BP), '[m]\n'));
+    fprintf(fid,strcat('Frame Bottom Panel Bolt Diameter =',32,num2str(D_BP_B), '[m]\n'));
+    fprintf(fid,strcat('Base Plate Thickness =',32,num2str(t_BPl), '[m]\n'));
+    fprintf(fid,strcat('Hood Thickness =',32,num2str(t_Hood), '[m]\n'));
+    fprintf(fid,strcat('Window Tubing Diameter =',32,num2str(D_window_tubing), '[m]\n\n'));
+    fprintf(fid,strcat('Total Mass =',32,num2str(Wt_Total), '[Kg]\n\n'));    
+    fprintf(fid,'*_________________________________________________________*\n');
+    fprintf(fid,'* Additional Optimized / Calculated Properties: \n');
+    fprintf(fid,'*_________________________________________________________*\n');
+    fprintf(fid,'*---------------------------------------------------------*\n');
+    fprintf(fid,'* Air Flow: \n');
+    fprintf(fid,'*---------------------------------------------------------*\n');
+    fprintf(fid,strcat('Volume Flow Rate Inside =',32,num2str(V_inside),' [m^3/s]\n'));
+    fprintf(fid,strcat('Filter Velocity =',32,num2str(V_air_evap),' [m/s]\n'));    
+    fprintf(fid,strcat('Supply Temperature (to room) =',32,num2str(T_LpV),' [C]\n'));
+    fprintf(fid,strcat('Supply Relative Humidity =',32,num2str(RH_supply),' [%]\n'));    
+    fprintf(fid,strcat('Volume Flow Rate Outside =',32,num2str(V_outside),' [m^3/s]\n'));
+    fprintf(fid,strcat('Filter Velocity =',32,num2str(V_air_cond),' [m/s]\n'));
+    fprintf(fid,strcat('Exhaust Temperature (to outside) =',32,num2str(T_LpLV),' [C]\n'));
+    fprintf(fid,'*---------------------------------------------------------*\n');
+    fprintf(fid,'* Refrigerantion Cycle: \n');
+    fprintf(fid,'*---------------------------------------------------------*\n');
+    fprintf(fid,'>> Working Fluid: R410A\n');
+    fprintf(fid,strcat('Super Heated Vapor Temperature (HpV) =',32,num2str(T_HpV),' [C]\n'));    
+    fprintf(fid,strcat('High Pressure Liquid (HpL) =',32,num2str(T_HpL),' [C]\n')); 
+    fprintf(fid,strcat('Low Pressure Vapor Temperature (LpV) =',32,num2str(T_LpV),' [C]\n')); 
+    fprintf(fid,strcat('Low Pressure Liquid Vapor Temperature (LpLV) =',32,num2str(T_LpLV),' [C]\n'));
+    fprintf(fid,strcat('Evaporator Load (room cooling load) =',32,num2str(Q_evaporator),' [KW]\n'));
+    fprintf(fid,strcat('Compressor Work (no loss) =',32,num2str(W_compressor_noLoss),' [KW]\n'));    
+    fprintf(fid,strcat('Condenser Load =',32,num2str(Q_condenser),' [KW]\n'));
+    fprintf(fid,strcat('Refrigerant Mass Flow Rate =',32,num2str(m_ref),' [Kg/s]\n'));
+    fprintf(fid,strcat('Refrigerant Pipe Diameter =',32,num2str(D_ref_pipe),' [m]\n'));
+    fprintf(fid,strcat('Refrigerant Pipe thickness =',32,num2str(t_ref_pipe),' [m]\n'));
+    fprintf(fid,'*---------------------------------------------------------*\n');
+    fprintf(fid,'* Evaporator: \n');
+    fprintf(fid,'*---------------------------------------------------------*\n');
+    fprintf(fid,strcat('Renolds Number Air Average =',32,num2str(Renolds_air_avg_evap),' [/]\n')); 
+    fprintf(fid,strcat('Renolds Number LpV =',32,num2str(Renolds_ref_LpV),' [/]\n')); 
+    fprintf(fid,strcat('Renolds Number LpLV =',32,num2str(Renolds_ref_LpLV),' [/]\n'));  
+    fprintf(fid,strcat('Average Convection Coefficient Refrigerant =',32,num2str(hconv_ref_avg_evap),' [W/m^2K]\n'));  
+    fprintf(fid,strcat('Average Convection Coefficient Air =',32,num2str(hconv_air_avg_evap),' [W/m^2K]\n'));
+    fprintf(fid,strcat('Total Thermal Resistance =',32,num2str(R_total_evap),' [K/W]\n'));
+    fprintf(fid,'*---------------------------------------------------------*\n');
+    fprintf(fid,'* Condenser: \n');
+    fprintf(fid,'*---------------------------------------------------------*\n');
+    fprintf(fid,strcat('Renolds Number Air Average =',32,num2str(Renolds_air_avg_cond),' [/]\n'));
+    fprintf(fid,strcat('Renolds Number HpV =',32,num2str(Renolds_ref_HpV),' [/]\n')); 
+    fprintf(fid,strcat('Renolds Number HpL =',32,num2str(Renolds_ref_HpL),' [/]\n'));  
+    fprintf(fid,strcat('Average Convection Coefficient =',32,num2str(hconv_ref_avg_evap),' [W/m^2K]\n'));    
+    fprintf(fid,strcat('Average Convection Coefficient Air =',32,num2str(hconv_air_avg_cond),' [W/m^2K]\n'));
+    fprintf(fid,strcat('Total Thermal Resistance =',32,num2str(R_total_cond),' [K/W]\n'));
+    fprintf(fid,'*---------------------------------------------------------*\n');
+    fprintf(fid,'*Fluid Friction Losses: \n');
+    fprintf(fid,'*---------------------------------------------------------*\n');
+	fprintf(fid,strcat('Head Loss Total Evaporator Air Cycle =',32,num2str(headLoss_evap_total),' [m AIR]\n'));
+    fprintf(fid,strcat('Pressure Loss Evaporator Filters =',32,num2str(headLoss_evap_filter_total),' [m AIR]\n'));    
+    fprintf(fid,strcat('Total Pressure loss =',32,num2str(dP_total_evap), '[Pa]\n')); 
+    fprintf(fid,strcat('Head Loss Total Condenser Air Cycle =',32,num2str(headLoss_cond_total),' [m AIR]\n'));
+    fprintf(fid,strcat('Pressure Loss Window Tubing =',32,num2str(2*headLoss_window_tubing_in),' [m AIR]\n'));	
+    fprintf(fid,strcat('Total Pressure loss =',32,num2str(dP_total_cond), '[Pa]\n'));
+    fprintf(fid,strcat('Window Tubing Diameter =',32,num2str(D_window_tubing), '[m]\n'));
+    fprintf(fid,strcat('Head Loss Refrigeration Cycle =',32,num2str(headLoss_cond_total),' [m R410a]\n'));
+    fprintf(fid,strcat('Compressor Work Loss Percent (WcompL/Wcomp) =',32,num2str(Percent_loss),' [%] << 10%\n\n'));
+    fprintf(fid,'__________________________________________________________\n');
+    fprintf(fid,'*Electrical: \n');
+    fprintf(fid,'__________________________________________________________\n');
+	fprintf(fid,strcat('Fan Electrical Load =',32,num2str(E_fan_evap),' [W]\n'));
+    fprintf(fid,'>> Only Filtration\n');     
+    fprintf(fid,strcat('Required Battery Capacity =',32,num2str(C_battery), '[Ah]\n'));
+    fprintf(fid,strcat('Battery Selection =',32,num2str(C_battery_actual), '[V]\n'));
+    fprintf(fid,'*---------------------------------------------------------*\n');
+    fprintf(fid,'*Structural: \n');
+    fprintf(fid,'*---------------------------------------------------------*\n');
+	fprintf(fid,strcat('Frame Top Panel Mass =',32,num2str(Wt_TP), '[Kg]\n'));    
+    fprintf(fid,strcat('Frame Bracket Mass =',32,num2str(Wt_FB), '[Kg]\n'));
+    fprintf(fid,strcat('Frame Bottom Panel Mass =',32,num2str(Wt_BP), '[Kg]\n'));    
+    fprintf(fid,strcat('Base Plate Mass =',32,num2str(Wt_BPl), '[Kg]\n'));
+    fprintf(fid,strcat('Hood Mass =',32,num2str(Wt_Hood), '[Kg]\n'));    
+    fprintf(fid,'*_________________________________________________________*\n');
+    fprintf(fid,'*Assumptions: \n');
+    fprintf(fid,'*_________________________________________________________*\n');
+	fprintf(fid,strcat('Isentropic Compressor Efficiency =',32,num2str(efficiency_comp), '[%]\n'));    
+    fprintf(fid,strcat('Evaporator Efficiency =',32,num2str(efficiency_evap), '[%]\n'));
+    fprintf(fid,strcat('Condenser Efficiency =',32,num2str(efficiency_cond), '[%]\n\n'));
+    fprintf(fid,'*=========================================================*\n');
+    fprintf(fid,'*>>DONE\n');
+    fprintf(fid,'*=========================================================*\n');
+	fclose(fid); 
+end
+
